@@ -46,6 +46,8 @@
 #include <getopt.h>
 #include <arpa/inet.h>
 #include <time.h>
+#include <fcntl.h>
+#include <sys/mman.h>
 
 #include "pingpong.h"
 
@@ -306,9 +308,39 @@ out:
 
 #include <sys/param.h>
 
+static int __init_mmap(struct pingpong_context *ctx, size_t size,
+			const char *fname, unsigned long offset)
+{
+	int fd = open(fname, O_RDWR);
+	if (fd < 0) {
+		printf("Unable to open '%s': %s\n", fname, strerror(errno));
+		return 1;
+	}
+
+	ctx->buf = mmap(NULL, size, PROT_WRITE | PROT_READ, MAP_SHARED, fd,
+			offset);
+	close(fd);
+
+	if (ctx->buf == MAP_FAILED) {
+		printf("Unable to mmap '%s': %s\n", fname, strerror(errno));
+		return 1;
+	}
+
+	printf("allocated mmap buffer of size %zd at %p\n", size, ctx->buf);
+
+	return 0;
+}
+
+static int __free_mmap(struct pingpong_context *ctx)
+{
+	munmap(ctx->buf, ctx->size);
+	return 0;
+}
+
+
 static struct pingpong_context *pp_init_ctx(struct ibv_device *ib_dev, int size,
 					    int rx_depth, int port,
-					    int use_event, int is_server)
+                        int use_event, int is_server, const char *fname)
 {
 	struct pingpong_context *ctx;
 
@@ -319,12 +351,21 @@ static struct pingpong_context *pp_init_ctx(struct ibv_device *ib_dev, int size,
 	ctx->size     = size;
 	ctx->rx_depth = rx_depth;
 
-	ctx->buf = malloc(roundup(size, page_size));
-	if (!ctx->buf) {
-		fprintf(stderr, "Couldn't allocate work buf.\n");
-		return NULL;
-	}
-
+	if (fname==NULL){
+        ctx->buf = malloc(roundup(size, page_size));
+        if (!ctx->buf) {
+            fprintf(stderr, "Couldn't allocate work buf.\n");
+            return NULL;
+        }
+    }
+    else
+    {
+        if (__init_mmap(ctx, size, fname, 0))
+        {
+            fprintf(stderr, "Couldn't allocate work buf.\n");
+            return NULL;
+        }
+    }
 	memset(ctx->buf, 0x7b + is_server, size);
 
 	ctx->context = ibv_open_device(ib_dev);
@@ -403,7 +444,7 @@ static struct pingpong_context *pp_init_ctx(struct ibv_device *ib_dev, int size,
 	return ctx;
 }
 
-int pp_close_ctx(struct pingpong_context *ctx)
+int pp_close_ctx(struct pingpong_context *ctx, const char *fname)
 {
 	if (ibv_destroy_qp(ctx->qp)) {
 		fprintf(stderr, "Couldn't destroy QP\n");
@@ -437,8 +478,12 @@ int pp_close_ctx(struct pingpong_context *ctx)
 		return 1;
 	}
 
-	free(ctx->buf);
-	free(ctx);
+	if (fname==NULL)
+        free(ctx->buf);
+	else
+        __free_mmap(ctx);
+
+    free(ctx);
 
 	return 0;
 }
@@ -501,6 +546,7 @@ static void usage(const char *argv0)
 	printf("  -l, --sl=<sl>          service level value\n");
 	printf("  -e, --events           sleep on CQ events (default poll)\n");
 	printf("  -g, --gid-idx=<gid index> local port gid index\n");
+	printf("  -f, --fname=<filename> use a mmapable file for the RDMA MR\n");
 }
 
 int main(int argc, char *argv[])
@@ -526,6 +572,7 @@ int main(int argc, char *argv[])
 	int                      sl = 0;
 	int			 gidx = -1;
 	char			 gid[33];
+    char                     *fname = NULL;
 
 	srand48(getpid() * time(NULL));
 
@@ -543,10 +590,11 @@ int main(int argc, char *argv[])
 			{ .name = "sl",       .has_arg = 1, .val = 'l' },
 			{ .name = "events",   .has_arg = 0, .val = 'e' },
 			{ .name = "gid-idx",  .has_arg = 1, .val = 'g' },
+			{ .name = "fname",    .has_arg = 1, .val = 'f' },
 			{ 0 }
 		};
 
-		c = getopt_long(argc, argv, "p:d:i:s:m:r:n:l:eg:", long_options, NULL);
+		c = getopt_long(argc, argv, "p:d:i:s:m:r:n:l:eg:f:", long_options, NULL);
 		if (c == -1)
 			break;
 
@@ -603,6 +651,10 @@ int main(int argc, char *argv[])
 			gidx = strtol(optarg, NULL, 0);
 			break;
 
+		case 'f':
+			fname = strdup(optarg);
+			break;
+
 		default:
 			usage(argv[0]);
 			return 1;
@@ -642,7 +694,8 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	ctx = pp_init_ctx(ib_dev, size, rx_depth, ib_port, use_event, !servername);
+	ctx = pp_init_ctx(ib_dev, size, rx_depth, ib_port, use_event,
+                      !servername, fname);
 	if (!ctx)
 		return 1;
 
@@ -817,7 +870,7 @@ int main(int argc, char *argv[])
 
 	ibv_ack_cq_events(ctx->cq, num_cq_events);
 
-	if (pp_close_ctx(ctx))
+	if (pp_close_ctx(ctx, fname))
 		return 1;
 
 	ibv_free_device_list(dev_list);
