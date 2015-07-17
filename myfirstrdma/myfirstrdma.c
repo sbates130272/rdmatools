@@ -30,8 +30,10 @@
 ////////////////////////////////////////////////////////////////////////
 
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
+#include <rdma/rdma_cma.h>
 #include <infiniband/verbs.h>
 
 /* Enumeration for the error types we may enounter. We avoid using
@@ -52,19 +54,28 @@ enum errors {
  */
 
 struct myfirstrdma {
-    char                *server;
-	struct ibv_device   **dev_list;
-	struct ibv_context	*ctx;
-    struct ibv_pd       *pd;
-    void                *buf;
-    struct ibv_mr       *mr;
-    int                 mr_flags;
-    size_t              size;
+    char                    *server;
+	struct ibv_device       **dev_list;
+	struct ibv_context	    *ctx;
+    struct ibv_pd           *pd;
+    void                    *buf;
+    struct ibv_mr           *mr;
+    int                     mr_flags;
+    size_t                  size;
+    char                    *port;
+    struct rdma_addrinfo    hints;
+    struct rdma_addrinfo    *res;
+    struct rdma_cm_id       *lid;
+    struct rdma_cm_id       **cid;
+    struct ibv_qp_init_attr attr;
 };
 
 static const struct myfirstrdma defaults = {
+    .server   = NULL,
     .mr_flags = IBV_ACCESS_LOCAL_WRITE,
     .size     = 4096,
+    .port     = "12345",
+    .hints    = { 0 },
 };
 
 /* A static (local) function to establish the rdma connection. If
@@ -74,6 +85,32 @@ static const struct myfirstrdma defaults = {
 
 int __setup(struct myfirstrdma *cfg)
 {
+    int ret;
+
+    if (cfg->server)
+        ret = rdma_getaddrinfo(cfg->server, cfg->port, &cfg->hints, &cfg->res);
+    else {
+        cfg->hints.ai_flags      = RAI_PASSIVE;
+        cfg->hints.ai_port_space = RDMA_PS_TCP;
+        ret = rdma_getaddrinfo(NULL, cfg->port, &cfg->hints, &cfg->res);
+    }
+    if (ret)
+        return ret;
+
+    ret = rdma_create_ep(&cfg->lid, cfg->res, cfg->pd, &cfg->attr);
+    if (ret)
+        return ret;
+    rdma_freeaddrinfo(cfg->res);
+
+    printf("Hello\n");
+
+    if (!cfg->server){
+        ret = rdma_listen(cfg->lid, 0);
+        if (ret)
+            return ret;
+        ret = rdma_get_request(cfg->lid, cfg->cid);
+    }
+
     return 0;
 }
 
