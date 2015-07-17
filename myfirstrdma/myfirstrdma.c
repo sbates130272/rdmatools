@@ -34,7 +34,8 @@
 
 #include <infiniband/verbs.h>
 
-/* Enumeration for the error types we may enounter.
+/* Enumeration for the error types we may enounter. We avoid using
+ * perror just to keep the code simple.
  */
 
 enum errors {
@@ -43,6 +44,7 @@ enum errors {
     NO_PROT_DOMAIN = -3,
     NO_BUFFER      = -4,
     NO_MR          = -5,
+    NO_CONNECTION  = -6,
 };
 
 /* Define a container structure that stores all the relevant
@@ -60,11 +62,26 @@ struct myfirstrdma {
     size_t              size;
 };
 
+static const struct myfirstrdma defaults = {
+    .mr_flags = IBV_ACCESS_LOCAL_WRITE,
+    .size     = 4096,
+};
+
+/* A static (local) function to establish the rdma connection. If
+ * server is not NULL we know we are the client. This affects how
+ * rdmacm is used. Return 0 on success.
+ */
+
+int __setup(struct myfirstrdma *cfg)
+{
+    return 0;
+}
+
 
 int main(int argc, char *argv[])
 {
 
-    struct myfirstrdma cfg;
+    struct myfirstrdma cfg = defaults;
 
     /* Process the command line. The only argument allowed is in
        client mode and it points to the server. */
@@ -107,7 +124,15 @@ int main(int argc, char *argv[])
 	if (!cfg.mr)
 		return NO_MR;
 
+    /* Now we get to some client/server specifc code. We use the rdma
+     * connection manager (rdmacm) library to establish a
+     * connection. This is only one of several ways of doing this. The
+     * server enters a passive listening mode while the client
+     * actively connects to the server provided via the command line.
+     */
 
+    if ( __setup(&cfg) )
+        return NO_CONNECTION;
 
     /* Tear everything down in reverse order to how it was constucted
      * so we leave the program in a clean state.
