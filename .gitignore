@@ -1,0 +1,4 @@
+*.o
+lsrdma/lsrdma
+myfirstrdma/myfirstrdma
+pingpong/rc_pingpong
