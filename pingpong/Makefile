@@ -1,8 +1,11 @@
-LDFLAGS += -libverbs
-CFLAGS += -std=gnu99 -D_GNU_SOURCE
-default: rc_pingpong
+EXE = rc_pingpong
 
-rc_pingpong: pingpong.o
+LDLIBS += -libverbs -lrdmacm
+CFLAGS += -std=c99 -D_GNU_SOURCE
+
+default: $(EXE)
+
+$(EXE): pingpong.o
 
 clean:
-	rm -rf rc_pingpong *.o *~
+	rm -rf $(EXE) *.o *~

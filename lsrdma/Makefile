@@ -1,6 +1,9 @@
-LDFLAGS += -libverbs
-CFLAGS += -std=c99
-default: lsrdma
+EXE = lsrdma
+
+LDLIBS += -libverbs -lrdmacm
+CFLAGS += -std=c99 -D_GNU_SOURCE
+
+default: $(EXE)
 
 clean:
-	rm -rf lsrdma *.o *~
+	rm -rf $(EXE) *.o *~

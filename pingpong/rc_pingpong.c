@@ -48,6 +48,7 @@
 #include <time.h>
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <errno.h>
 
 #include "pingpong.h"
 

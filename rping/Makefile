@@ -1,6 +1,6 @@
-EXE = myfirstrdma
+EXE = rping
 
-LDLIBS += -libverbs -lrdmacm
+LDLIBS += -libverbs -lrdmacm -lpthread
 CFLAGS += -std=c99 -D_GNU_SOURCE
 
 default: $(EXE)
