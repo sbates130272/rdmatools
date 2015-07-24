@@ -31,7 +31,9 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <string.h>
+#include <errno.h>
 
 #include <rdma/rdma_cma.h>
 #include <infiniband/verbs.h>
@@ -64,9 +66,8 @@ struct myfirstrdma {
     size_t                  size;
     char                    *port;
     struct rdma_addrinfo    hints;
-    struct rdma_addrinfo    *res;
     struct rdma_cm_id       *lid;
-    struct rdma_cm_id       **cid;
+    struct rdma_cm_id       *cid;
     struct ibv_qp_init_attr attr;
 };
 
@@ -76,6 +77,7 @@ static const struct myfirstrdma defaults = {
     .size     = 4096,
     .port     = "12345",
     .hints    = { 0 },
+    .attr     = { 0 },
 };
 
 /* A static (local) function to establish the rdma connection. If
@@ -86,41 +88,63 @@ static const struct myfirstrdma defaults = {
 int __setup(struct myfirstrdma *cfg)
 {
     int ret = 0;
+    struct rdma_addrinfo *res;
 
+    fprintf(stderr, "%s\t%s\n", cfg->server, cfg->port);
+
+    cfg->hints.ai_port_space = RDMA_PS_TCP;
     if (cfg->server)
-        ret = rdma_getaddrinfo(cfg->server, cfg->port, &cfg->hints, &cfg->res);
+        ret = rdma_getaddrinfo(cfg->server, cfg->port, &cfg->hints, &res);
     else {
         cfg->hints.ai_flags      = RAI_PASSIVE;
-        cfg->hints.ai_port_space = RDMA_PS_TCP;
-        ret = rdma_getaddrinfo(NULL, cfg->port, &cfg->hints, &cfg->res);
+        ret = rdma_getaddrinfo(NULL, cfg->port, &cfg->hints, &res);
     }
     if (ret)
         return ret;
 
-    fprintf(stdout, "Hello.\n");
-
-    ret = rdma_create_ep(&cfg->lid, cfg->res, cfg->pd, &cfg->attr);
-    if (ret)
-        return ret;
-    rdma_freeaddrinfo(cfg->res);
-
-    fprintf(stdout, "Hello 2.\n");
+    cfg->attr.cap.max_send_wr     = cfg->attr.cap.max_recv_wr  = 1; 
+    cfg->attr.cap.max_send_sge    = cfg->attr.cap.max_recv_sge = 1; 
+    cfg->attr.cap.max_inline_data = 16; 
+    cfg->attr.sq_sig_all          = 1; 
+    if (cfg->server)
+      cfg->attr.qp_context = cfg->cid;
 
     if (cfg->server)
+      ret = rdma_create_ep(&cfg->cid, res, NULL, &cfg->attr);
+    else
+      ret = rdma_create_ep(&cfg->lid, res, NULL, &cfg->attr);
+    
+    if (ret)
+        return ret;
+    rdma_freeaddrinfo(res);
+
+    if (cfg->server){
+	    ret = rdma_connect(cfg->cid, NULL);
+	    if (ret){
+		    fprintf(stderr,"%s\n",strerror(errno));
+		    return ret;
+	    }
+		    
         fprintf(stdout, "Client established a connection to %s.\n",
                 cfg->server);
-    else
-    {
+    } else {
         ret = rdma_listen(cfg->lid, 0);
         if (ret)
             return ret;
-        ret = rdma_get_request(cfg->lid, cfg->cid);
-        fprintf(stdout, "Server detected a connection from .\n");
+        ret = rdma_get_request(cfg->lid, &cfg->cid);
+	if (ret){
+	  fprintf(stderr,"%s\n",strerror(errno));
+	  return ret;
+	}
+        ret = rdma_accept(cfg->cid, NULL);
+
+        fprintf(stdout, "Server detected a connection.\n");
+	while(1)
+	  usleep(1000);
     }
 
     return ret;
 }
-
 
 int main(int argc, char *argv[])
 {
