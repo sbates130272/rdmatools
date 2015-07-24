@@ -41,12 +41,12 @@
  */
 
 enum errors {
-    NO_RDMA_DEV    = -1,
-    NO_CONTEXT     = -2,
-    NO_PROT_DOMAIN = -3,
-    NO_BUFFER      = -4,
-    NO_MR          = -5,
-    NO_CONNECTION  = -6,
+    NO_RDMA_DEV    = 1,
+    NO_CONTEXT     = 2,
+    NO_PROT_DOMAIN = 3,
+    NO_BUFFER      = 4,
+    NO_MR          = 5,
+    NO_CONNECTION  = 6,
 };
 
 /* Define a container structure that stores all the relevant
@@ -85,7 +85,7 @@ static const struct myfirstrdma defaults = {
 
 int __setup(struct myfirstrdma *cfg)
 {
-    int ret;
+    int ret = 0;
 
     if (cfg->server)
         ret = rdma_getaddrinfo(cfg->server, cfg->port, &cfg->hints, &cfg->res);
@@ -97,21 +97,28 @@ int __setup(struct myfirstrdma *cfg)
     if (ret)
         return ret;
 
+    fprintf(stdout, "Hello.\n");
+
     ret = rdma_create_ep(&cfg->lid, cfg->res, cfg->pd, &cfg->attr);
     if (ret)
         return ret;
     rdma_freeaddrinfo(cfg->res);
 
-    printf("Hello\n");
+    fprintf(stdout, "Hello 2.\n");
 
-    if (!cfg->server){
+    if (cfg->server)
+        fprintf(stdout, "Client established a connection to %s.\n",
+                cfg->server);
+    else
+    {
         ret = rdma_listen(cfg->lid, 0);
         if (ret)
             return ret;
         ret = rdma_get_request(cfg->lid, cfg->cid);
+        fprintf(stdout, "Server detected a connection from .\n");
     }
 
-    return 0;
+    return ret;
 }
 
 
