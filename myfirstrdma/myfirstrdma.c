@@ -36,6 +36,7 @@
 #include <errno.h>
 
 #include <rdma/rdma_cma.h>
+#include <rdma/rdma_verbs.h>
 #include <infiniband/verbs.h>
 
 /* Enumeration for the error types we may enounter. We avoid using
@@ -63,7 +64,7 @@ struct myfirstrdma {
   struct ibv_device       **dev_list;
   struct ibv_context	  *ctx;
   struct ibv_pd           *pd;
-  void                    *buf;
+  char                    *buf;
   struct ibv_mr           *mr;
   int                     mr_flags;
   size_t                  size;
@@ -165,6 +166,9 @@ int __setup(struct myfirstrdma *cfg)
       ret = rdma_connect(cfg->cid, NULL);
       if (ret)
 	return __report(cfg, "rdma_connect", ret);
+      cfg->mr = rdma_reg_msgs(cfg->cid, cfg->buf, cfg->size);
+      if (ret)
+	return __report(cfg, "rdma_reg_msgs", ret);
       if (cfg->verbose)
 	fprintf(stdout, "Client established a connection to %s.\n",
 		cfg->server);
@@ -175,6 +179,12 @@ int __setup(struct myfirstrdma *cfg)
       ret = rdma_get_request(cfg->lid, &cfg->cid);
       if (ret)
 	return __report(cfg, "rdma_get_request", ret);
+      cfg->mr = rdma_reg_msgs(cfg->cid, cfg->buf, cfg->size);
+      if (ret)
+	return __report(cfg, "rdma_reg_msgs", ret);
+      ret = rdma_post_recv(cfg->cid, NULL, cfg->buf, cfg->size, cfg->mr);
+      if (ret)
+	return __report(cfg, "rdma_post_recv", ret);
       ret = rdma_accept(cfg->cid, NULL);
       if (ret)
 	return __report(cfg, "rdma_accept", ret);
@@ -183,14 +193,29 @@ int __setup(struct myfirstrdma *cfg)
 		cfg->cid->verbs->device->name);
     }
 
+
     return ret;
 }
 
 int __run(struct myfirstrdma *cfg)
 {
 
-  usleep(10000);
-  return 0;
+  int ret = 0;
+  struct ibv_wc wc;
+
+  if (cfg->server){
+    memset(cfg->buf, 0xa, cfg->size);
+    ret = rdma_post_send(cfg->cid, NULL, cfg->buf, cfg->size, NULL, IBV_SEND_INLINE);
+    if (ret)
+      return __report(cfg, "rdma_post_send", ret);
+  } else {
+    while(1){
+      fprintf(stdout,"%c\r",cfg->buf[0]);
+      usleep(1000);
+    }
+  }
+    
+  return ret;
 }
 
 int main(int argc, char *argv[])
@@ -227,17 +252,17 @@ int main(int argc, char *argv[])
     if (!cfg.ctx)
       return __report(&cfg, "ibv_open_device", NO_CONTEXT);
     
-    cfg.pd = ibv_alloc_pd(cfg.ctx);
+    /*    cfg.pd = ibv_alloc_pd(cfg.ctx);
     if (!cfg.pd)
-      return __report(&cfg, "ibv_alloc_pd", NO_PROT_DOMAIN);
+    return __report(&cfg, "ibv_alloc_pd", NO_PROT_DOMAIN);*/
     
     cfg.buf = malloc(cfg.size);
     if (!cfg.buf)
       return __report(&cfg, "malloc", NO_BUFFER);
     
-    cfg.mr = ibv_reg_mr(cfg.pd, cfg.buf, cfg.size, cfg.mr_flags);
+    /*    cfg.mr = ibv_reg_mr(cfg.pd, cfg.buf, cfg.size, cfg.mr_flags);
     if (!cfg.mr)
-      return __report(&cfg, "ibv_reg_mr", NO_MR);
+    return __report(&cfg, "ibv_reg_mr", NO_MR);*/
 
     /* Now we get to some client/server specifc code. We use the rdma
      * connection manager (rdmacm) library to establish a
