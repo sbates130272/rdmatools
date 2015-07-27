@@ -4,3 +4,5 @@ lsrdma/lsrdma
 myfirstrdma/myfirstrdma
 pingpong/rc_pingpong
 rping/rping
+server-client/rdma_server
+server-client/rdma_client

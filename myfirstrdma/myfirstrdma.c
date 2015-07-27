@@ -80,7 +80,7 @@ struct myfirstrdma {
 static const struct myfirstrdma defaults = {
     .server   = NULL,
     .mr_flags = IBV_ACCESS_LOCAL_WRITE,
-    .size     = 4096,
+    .size     = 16,
     .port     = "12345",
     .hints    = { 0 },
     .attr     = { 0 },
@@ -138,7 +138,7 @@ int __setup(struct myfirstrdma *cfg)
 
     cfg->attr.cap.max_send_wr     = cfg->attr.cap.max_recv_wr  = 1;
     cfg->attr.cap.max_send_sge    = cfg->attr.cap.max_recv_sge = 1;
-    cfg->attr.cap.max_inline_data = 16;
+    cfg->attr.cap.max_inline_data = cfg->size;
     cfg->attr.sq_sig_all          = 1;
 
     if (cfg->server){
@@ -154,7 +154,6 @@ int __setup(struct myfirstrdma *cfg)
      * We can now free the temporary variable with the address
      * information for the other end of the link.
      */
-
     
     rdma_freeaddrinfo(res);
 
@@ -163,12 +162,12 @@ int __setup(struct myfirstrdma *cfg)
      */
 
     if (cfg->server){
-      ret = rdma_connect(cfg->cid, NULL);
-      if (ret)
-	return __report(cfg, "rdma_connect", ret);
       cfg->mr = rdma_reg_msgs(cfg->cid, cfg->buf, cfg->size);
       if (ret)
 	return __report(cfg, "rdma_reg_msgs", ret);
+      ret = rdma_connect(cfg->cid, NULL);
+      if (ret)
+	return __report(cfg, "rdma_connect", ret);
       if (cfg->verbose)
 	fprintf(stdout, "Client established a connection to %s.\n",
 		cfg->server);
@@ -201,6 +200,7 @@ int __run(struct myfirstrdma *cfg)
 {
 
   int ret = 0;
+  unsigned i = 0;
   struct ibv_wc wc;
 
   if (cfg->server){
@@ -210,8 +210,9 @@ int __run(struct myfirstrdma *cfg)
       return __report(cfg, "rdma_post_send", ret);
   } else {
     while(1){
-      fprintf(stdout,"%c\r",cfg->buf[0]);
-      usleep(1000);
+      fprintf(stdout,"\n");
+      fprintf(stdout,"%d\t0x%x\r",i, cfg->buf[0]);
+      usleep(1000000); i++;
     }
   }
     
