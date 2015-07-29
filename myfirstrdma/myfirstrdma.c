@@ -53,7 +53,7 @@ enum errors {
     RUN_PROBLEM    = 7,
 };
 
-/* 
+/*
  * Define a container structure that stores all the relevant
  * information for this very simple RDMA program. After that, assign
  * some defaults to this container.
@@ -75,20 +75,22 @@ struct myfirstrdma {
   struct ibv_qp_init_attr attr;
   unsigned                debug;
   unsigned                verbose;
+  unsigned                iters;
 };
 
 static const struct myfirstrdma defaults = {
-    .server   = NULL,
-    .mr_flags = IBV_ACCESS_LOCAL_WRITE,
-    .size     = 16,
-    .port     = "12345",
-    .hints    = { 0 },
-    .attr     = { 0 },
-    .debug    = 1,
-    .verbose  = 1,
+  .server   = NULL,
+  .mr_flags = IBV_ACCESS_LOCAL_WRITE,
+  .size     = 16,
+  .port     = "12345",
+  .hints    = { 0 },
+  .attr     = { 0 },
+  .debug    = 1,
+  .verbose  = 1,
+  .iters    = 16,
 };
 
-/* 
+/*
  * A helper function to assist in debug when function calls return
  * with an exit status.
  */
@@ -101,7 +103,7 @@ int __report(struct myfirstrdma *cfg, const char *func, int val)
   return val;
 }
 
-/* 
+/*
  * A static (local) function to establish the rdma connection. If
  * server is not NULL we know we are the client. This affects how
  * rdmacm is used. Return 0 on success.
@@ -109,184 +111,257 @@ int __report(struct myfirstrdma *cfg, const char *func, int val)
 
 int __setup(struct myfirstrdma *cfg)
 {
-    int ret = 0;
-    struct rdma_addrinfo *res;
+  int ret = 0;
+  struct rdma_addrinfo *res;
+  
+  /*
+   * Use rdma_getaddrinfo to determine if there is a path to the
+   * other end. The server runs in passive mode so it waits for a
+   * connection. The client uses this function call to determine if
+   * a path exists based on the server name, port and the hints
+   * provided. The result comes back in res.
+   */
+  
+  cfg->hints.ai_port_space = RDMA_PS_TCP;
+  if (cfg->server)
+    ret = rdma_getaddrinfo(cfg->server, cfg->port, &cfg->hints, &res);
+  else {
+    cfg->hints.ai_flags = RAI_PASSIVE;
+    ret = rdma_getaddrinfo(NULL, cfg->port, &cfg->hints, &res);
+  }
+  if (ret)
+    return __report(cfg, "rdma_getaddrinfo", ret);
 
-    /* 
-     * Use rdma_getaddrinfo to determine if there is a path to the
-     * other end. The server runs in passive mode so it waits for a
-     * connection. The client uses this function call to determine if
-     * a path exists based on the server name, port and the hints
-     * provided. The result comes back in res.
-     */
+  /*
+   * Now create a communication identifier and (on the client) a
+   * queue pair (QP) for processing jobs. We set certain attributes
+   * on this link.
+   */
+  
+  cfg->attr.cap.max_send_wr     = cfg->attr.cap.max_recv_wr  = 1;
+  cfg->attr.cap.max_send_sge    = cfg->attr.cap.max_recv_sge = 1;
+  cfg->attr.cap.max_inline_data = 16;
+  cfg->attr.sq_sig_all          = 1;
+  
+  if (cfg->server){
+    cfg->attr.qp_context = cfg->cid;
+    ret = rdma_create_ep(&cfg->cid, res, NULL, &cfg->attr);
+  } else
+    ret = rdma_create_ep(&cfg->lid, res, NULL, &cfg->attr);
+  
+  if (ret)
+    return __report(cfg, "rdma_create_ep", ret);
 
-    cfg->hints.ai_port_space = RDMA_PS_TCP;
-    if (cfg->server)
-        ret = rdma_getaddrinfo(cfg->server, cfg->port, &cfg->hints, &res);
-    else {
-        cfg->hints.ai_flags = RAI_PASSIVE;
-        ret = rdma_getaddrinfo(NULL, cfg->port, &cfg->hints, &res);
-    }
+  /*
+   * We can now free the temporary variable with the address
+   * information for the other end of the link.
+   */
+
+  rdma_freeaddrinfo(res);
+  
+  /* Now either connect to the server or setup a wait for a
+   * connection from a client. On the server side we also setup a
+   * receive QP entry so we are ready to receive data.
+   */
+  
+  if (cfg->server){
+    cfg->mr = rdma_reg_msgs(cfg->cid, cfg->buf, cfg->size);
     if (ret)
-      return __report(cfg, "rdma_getaddrinfo", ret);
-
-    /* 
-     * Now create a communication identifier and (on the client) a
-     * queue pair (QP) for processing jobs. We set certain attributes
-     * on this link.
-     */
-
-    cfg->attr.cap.max_send_wr     = cfg->attr.cap.max_recv_wr  = 1;
-    cfg->attr.cap.max_send_sge    = cfg->attr.cap.max_recv_sge = 1;
-    cfg->attr.cap.max_inline_data = cfg->size;
-    cfg->attr.sq_sig_all          = 1;
-
-    if (cfg->server){
-      cfg->attr.qp_context = cfg->cid;
-      ret = rdma_create_ep(&cfg->cid, res, NULL, &cfg->attr);
-    } else
-      ret = rdma_create_ep(&cfg->lid, res, NULL, &cfg->attr);
-    
+      return __report(cfg, "rdma_reg_msgs", ret);
+    ret = rdma_connect(cfg->cid, NULL);
     if (ret)
-        return __report(cfg, "rdma_create_ep", ret);
-
-    /* 
-     * We can now free the temporary variable with the address
-     * information for the other end of the link.
-     */
-    
-    rdma_freeaddrinfo(res);
-
-    /* Now either connect to the server or setup a wait for a
-     *  connection from a client.
-     */
-
-    if (cfg->server){
-      cfg->mr = rdma_reg_msgs(cfg->cid, cfg->buf, cfg->size);
-      if (ret)
-	return __report(cfg, "rdma_reg_msgs", ret);
-      ret = rdma_connect(cfg->cid, NULL);
-      if (ret)
-	return __report(cfg, "rdma_connect", ret);
-      if (cfg->verbose)
-	fprintf(stdout, "Client established a connection to %s.\n",
-		cfg->server);
-    } else {
-      ret = rdma_listen(cfg->lid, 0);
-      if (ret)
-	return __report(cfg, "rdma_listen", ret);
-      ret = rdma_get_request(cfg->lid, &cfg->cid);
-      if (ret)
-	return __report(cfg, "rdma_get_request", ret);
-      cfg->mr = rdma_reg_msgs(cfg->cid, cfg->buf, cfg->size);
-      if (ret)
-	return __report(cfg, "rdma_reg_msgs", ret);
-      ret = rdma_post_recv(cfg->cid, NULL, cfg->buf, cfg->size, cfg->mr);
-      if (ret)
-	return __report(cfg, "rdma_post_recv", ret);
-      ret = rdma_accept(cfg->cid, NULL);
-      if (ret)
-	return __report(cfg, "rdma_accept", ret);
-      if (cfg->verbose)
-	fprintf(stdout, "Server detected a connection on %s from TBD.\n",
-		cfg->cid->verbs->device->name);
-    }
-
-
+      return __report(cfg, "rdma_connect", ret);
+    if (cfg->verbose)
+      fprintf(stdout, "Client established a connection to %s.\n",
+	      cfg->server);
+  } else {
+    ret = rdma_listen(cfg->lid, 0);
+    if (ret)
+      return __report(cfg, "rdma_listen", ret);
+    ret = rdma_get_request(cfg->lid, &cfg->cid);
+    if (ret)
+      return __report(cfg, "rdma_get_request", ret);
+    cfg->mr = rdma_reg_msgs(cfg->cid, cfg->buf, cfg->size);
+    if (ret)
+      return __report(cfg, "rdma_reg_msgs", ret);
+    ret = rdma_post_recv(cfg->cid, NULL, cfg->buf, cfg->size, cfg->mr);
+    if (ret)
+      return __report(cfg, "rdma_post_recv", ret);
+    ret = rdma_accept(cfg->cid, NULL);
+    if (ret)
+      return __report(cfg, "rdma_accept", ret);
+    if (cfg->verbose)
+      fprintf(stdout, "Server detected a connection on %s from TBD.\n",
+	      cfg->cid->verbs->device->name);
+  }
     return ret;
+}
+
+int __compare(char *buf, char val, size_t size)
+{
+  
+  for (unsigned i=0; i<size; i++){
+    printf("%d\t%d\t%d\n", i, buf[i], val);
+    fflush(stdout);
+    if (buf[i]!=val)
+      return 0;
+  }
+  
+  return 1;
+}
+
+void __wait(char *buf, char val, size_t size)
+{
+  while (__compare(buf, val, size)==0)
+    __sync_synchronize();
 }
 
 int __run(struct myfirstrdma *cfg)
 {
-
-  int ret = 0;
-  unsigned i = 0;
+  
+  int ret;
   struct ibv_wc wc;
+  int sval = 0, cval = 1;
+  
+  memset((void*)cfg->buf, 0x0, cfg->size);
+  memset((void*)cfg->buf, 0x7, cfg->size);
+  for (unsigned i=0; i<cfg->iters ; i++)
+  {
+    printf("\n\nHello! cval=%d sval=%d\n\n",cval,sval);
+    
+    if (cfg->server){
+      memset((void*)cfg->buf, cval, cfg->size);
+      usleep(1000);
+      fprintf(stderr,"0x%x\r", cfg->buf[0]);
+      ret = rdma_post_send(cfg->cid, NULL, cfg->buf, cfg->size, cfg->mr, 0);
+      if (ret)
+	return __report(cfg, "rdma_post_send", ret);
+      ret = rdma_get_send_comp(cfg->cid, &wc);
+      if (ret != 1)
+	return __report(cfg, "rdma_get_send_comp", ret);
+      ret = rdma_post_recv(cfg->cid, NULL, cfg->buf, cfg->size, cfg->mr);
+      if (ret)
+	return __report(cfg, "rdma_post_recv", ret);
+    }
+    else {
+      __wait(cfg->buf, cval, cfg->size);
+      ret = rdma_get_recv_comp(cfg->cid, &wc);
+      if (ret != 1)
+	return __report(cfg, "rdma_get_recv_comp", ret);
+    }
+    
+    sval = cval+1;
+    
+    if (cfg->server) {
+      __wait(cfg->buf, sval, cfg->size);
+      ret = rdma_get_recv_comp(cfg->cid, &wc);
+      if (ret != 1)
+	return __report(cfg, "rdma_get_recv_comp", ret);
 
-  if (cfg->server){
-    memset(cfg->buf, 0xa, cfg->size);
-    ret = rdma_post_send(cfg->cid, NULL, cfg->buf, cfg->size, NULL, IBV_SEND_INLINE);
+    } else {
+      memset(cfg->buf, sval, cfg->size);
+      usleep(1000);
+      ret = rdma_post_send(cfg->cid, NULL, cfg->buf, cfg->size, cfg->mr, 0);
+      if (ret)
+	return __report(cfg, "rdma_post_send", ret);
+      ret = rdma_get_send_comp(cfg->cid, &wc);
+      if (ret != 1)
+	return __report(cfg, "rdma_get_send_comp", ret);
+      ret = rdma_post_recv(cfg->cid, NULL, cfg->buf, cfg->size, cfg->mr);
+      if (ret)
+	return __report(cfg, "rdma_post_recv", ret);
+    }
+    cval=sval+1;
+    
+  }
+  
+  /*if (cfg->server){
+    ret = rdma_post_send(cfg->cid, NULL, cfg->buf, cfg->size, cfg->mr, 0);
     if (ret)
       return __report(cfg, "rdma_post_send", ret);
+    ret = rdma_get_send_comp(cfg->cid, &wc);
+    if (ret)
+      return __report(cfg, "rdma_get_send_comp", ret);
   } else {
+    unsigned i=0;
     while(1){
       fprintf(stdout,"\n");
-      fprintf(stdout,"%d\t0x%x\r",i, cfg->buf[0]);
+      fprintf(stderr,"%d\t0x%x\r",i, cfg->buf[0]);
       usleep(1000000); i++;
     }
-  }
-    
-  return ret;
+    }*/
+
+  return 0;
 }
 
 int main(int argc, char *argv[])
 {
 
-    struct myfirstrdma cfg = defaults;
+  struct myfirstrdma cfg = defaults;
+  
+  /* Process the command line. The only argument allowed is in
+     client mode and it points to the server. */
+  
+  if (argc>2)
+    return 1;
+  else if (argc==2)
+    cfg.server = strdup(argv[1]);
+  
+  /* Now establish a RDMA connection between the client and
+   * server. If we are the server we start and wait for the
+   * connction to occur. If we are client we either find the server
+   * or we quit. We work with the very first rdma port detected on
+   * the machine.
+   */
+  
+  /*    cfg.dev_list = ibv_get_device_list(NULL);
+	if (!cfg.dev_list)
+	return NO_RDMA_DEV;*/
+  
+  /* Now that we have found a RDMA port we set that up for a
+   * connection by creates a context, a Protection Domain (PD), a
+   * Memory-Region (MR) and queues. Note we also have to allocate a
+   * memory region for the MR via a call to malloc.
+   */
+  
+  /*    cfg.ctx = ibv_open_device(cfg.dev_list[0]);
+	if (!cfg.ctx)
+	return __report(&cfg, "ibv_open_device", NO_CONTEXT);*/
+  
+  /*    cfg.pd = ibv_alloc_pd(cfg.ctx);
+	if (!cfg.pd)
+	return __report(&cfg, "ibv_alloc_pd", NO_PROT_DOMAIN);*/
+  
+  cfg.buf = malloc(cfg.size);
+  if (!cfg.buf)
+    return __report(&cfg, "malloc", NO_BUFFER);
+  
+  /*    cfg.mr = ibv_reg_mr(cfg.pd, cfg.buf, cfg.size, cfg.mr_flags);
+	if (!cfg.mr)
+	return __report(&cfg, "ibv_reg_mr", NO_MR);*/
+  
+  /* Now we get to some client/server specifc code. We use the rdma
+   * connection manager (rdmacm) library to establish a
+   * connection. This is only one of several ways of doing this. The
+   * server enters a passive listening mode while the client
+   * actively connects to the server provided via the command line.
+   */
+  
+  if ( __setup(&cfg) )
+    return __report(&cfg, "setup", NO_MR);
+  
+  if ( __run(&cfg) )
+    return __report(&cfg, "run", RUN_PROBLEM);
+  
+  
+  /* Tear everything down in reverse order to how it was constucted
+   * so we leave the program in a clean state.
+   */
+  
+  free(cfg.buf);
+  ibv_dereg_mr(cfg.mr);
+  //    ibv_dealloc_pd(cfg.pd);
+  //    ibv_close_device(cfg.ctx);
 
-    /* Process the command line. The only argument allowed is in
-       client mode and it points to the server. */
-
-    if (argc>2)
-      return 1;
-    else if (argc==2)
-      cfg.server = strdup(argv[1]);
-
-    /* Now establish a RDMA connection between the client and
-     * server. If we are the server we start and wait for the
-     * connction to occur. If we are client we either find the server
-     * or we quit. We work with the very first rdma port detected on
-     * the machine.
-     */
-
-    cfg.dev_list = ibv_get_device_list(NULL);
-    if (!cfg.dev_list)
-      return NO_RDMA_DEV;
-
-    /* Now that we have found a RDMA port we set that up for a
-     * connection by creates a context, a Protection Domain (PD), a
-     * Memory-Region (MR) and queues. Note we also have to allocate a
-     * memory region for the MR via a call to malloc.
-     */
-
-    cfg.ctx = ibv_open_device(cfg.dev_list[0]);
-    if (!cfg.ctx)
-      return __report(&cfg, "ibv_open_device", NO_CONTEXT);
-    
-    /*    cfg.pd = ibv_alloc_pd(cfg.ctx);
-    if (!cfg.pd)
-    return __report(&cfg, "ibv_alloc_pd", NO_PROT_DOMAIN);*/
-    
-    cfg.buf = malloc(cfg.size);
-    if (!cfg.buf)
-      return __report(&cfg, "malloc", NO_BUFFER);
-    
-    /*    cfg.mr = ibv_reg_mr(cfg.pd, cfg.buf, cfg.size, cfg.mr_flags);
-    if (!cfg.mr)
-    return __report(&cfg, "ibv_reg_mr", NO_MR);*/
-
-    /* Now we get to some client/server specifc code. We use the rdma
-     * connection manager (rdmacm) library to establish a
-     * connection. This is only one of several ways of doing this. The
-     * server enters a passive listening mode while the client
-     * actively connects to the server provided via the command line.
-     */
-
-    if ( __setup(&cfg) )
-      return __report(&cfg, "setup", NO_MR);
-
-    if ( __run(&cfg) )
-      return __report(&cfg, "run", RUN_PROBLEM);
-
-
-    /* Tear everything down in reverse order to how it was constucted
-     * so we leave the program in a clean state.
-     */
-
-    free(cfg.buf);
-    ibv_dereg_mr(cfg.mr);
-    ibv_dealloc_pd(cfg.pd);
-    ibv_close_device(cfg.ctx);
-
-    return 0;
+  return 0;
 }
