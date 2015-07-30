@@ -35,6 +35,8 @@
 #include <string.h>
 #include <errno.h>
 
+#include <sys/time.h>
+
 #include <rdma/rdma_cma.h>
 #include <rdma/rdma_verbs.h>
 #include <infiniband/verbs.h>
@@ -72,21 +74,27 @@ struct myfirstrdma {
   unsigned                debug;
   unsigned                verbose;
   unsigned                iters;
+  unsigned                wait;
+  unsigned                memset;
+  struct timeval          start_time;
+  struct timeval          end_time;
 };
 
 static const struct myfirstrdma defaults = {
   .server   = NULL,
   .mr_flags = IBV_ACCESS_LOCAL_WRITE,
-  .size     = 16,
+  .size     = 4096,
   .port     = "12345",
   .hints    = { 0 },
   .attr     = { 0 },
   .debug    = 1,
   .verbose  = 1,
-  .iters    = 16,
+  .iters    = 512,
+  .wait     = 0,
+  .memset   = 0,
 };
 
-int report(struct myfirstrdma *cfg, const char *func, int val)
+static int report(struct myfirstrdma *cfg, const char *func, int val)
 {
   if (cfg->debug)
     fprintf(stderr,"%s: %d = %s.\n", func, errno, strerror(errno));
@@ -94,13 +102,31 @@ int report(struct myfirstrdma *cfg, const char *func, int val)
   return val;
 }
 
-/*
- * A static (local) function to establish the rdma connection. If
- * server is not NULL we know we are the client. This affects how
- * rdmacm is used. Return 0 on success.
- */
+int compare(char *buf, char val, size_t size)
+{
+  
+  for (unsigned i=0; i<size; i++)
+    if (buf[i]!=val)
+      return 0;
+  
+  return 1;
+}
 
-int setup(struct myfirstrdma *cfg)
+void wait(char *buf, char val, size_t size)
+{
+  while (compare(buf, val, size)==0)
+    __sync_synchronize();
+}
+
+static unsigned long long elapsed_utime(struct timeval start_time,
+					struct timeval end_time)
+{
+  unsigned long long ret = (end_time.tv_sec - start_time.tv_sec)*1000000 +
+    (end_time.tv_usec - start_time.tv_usec);
+  return ret;
+}
+
+static int setup(struct myfirstrdma *cfg)
 {
   int ret = 0;
   struct rdma_addrinfo *res;
@@ -114,9 +140,9 @@ int setup(struct myfirstrdma *cfg)
    */
   
   cfg->hints.ai_port_space = RDMA_PS_TCP;
-  if (cfg->server)
+  if (cfg->server) {
     ret = rdma_getaddrinfo(cfg->server, cfg->port, &cfg->hints, &res);
-  else {
+  } else {
     cfg->hints.ai_flags = RAI_PASSIVE;
     ret = rdma_getaddrinfo(NULL, cfg->port, &cfg->hints, &res);
   }
@@ -188,42 +214,27 @@ int setup(struct myfirstrdma *cfg)
     return ret;
 }
 
-int compare(char *buf, char val, size_t size)
-{
-  
-  for (unsigned i=0; i<size; i++){
-    printf("%d\t%d\t%d\n", i, buf[i], val);
-    fflush(stdout);
-    if (buf[i]!=val)
-      return 0;
-  }
-  
-  return 1;
-}
-
-void wait(char *buf, char val, size_t size)
-{
-  while (compare(buf, val, size)==0)
-    __sync_synchronize();
-}
-
-int __run(struct myfirstrdma *cfg)
+int run(struct myfirstrdma *cfg)
 {
   
   int ret;
   struct ibv_wc wc;
   int sval = 0, cval = 1;
-  
+
   memset((void*)cfg->buf, 0x0, cfg->size);
-  memset((void*)cfg->buf, 0x7, cfg->size);
-  for (unsigned i=0; i<cfg->iters ; i++)
-  {
-    printf("\n\nHello! cval=%d sval=%d\n\n",cval,sval);
-    
+  
+  if (cfg->verbose)
+    fprintf(stdout, "%s %d iterations of %zdB chunks...",
+	    (cfg->server) ? "Initiating" : "Servicing", cfg->iters, cfg->size);
+
+  gettimeofday(&cfg->start_time, NULL);
+
+  for (unsigned i=0; i<cfg->iters ; i++) {
+
     if (cfg->server){
-      memset((void*)cfg->buf, cval, cfg->size);
-      usleep(1000);
-      fprintf(stderr,"0x%x\r", cfg->buf[0]);
+      if (cfg->memset)
+	memset((void*)cfg->buf, cval, cfg->size);
+      __sync_synchronize();
       ret = rdma_post_send(cfg->cid, NULL, cfg->buf, cfg->size, cfg->mr, 0);
       if (ret)
 	return report(cfg, "rdma_post_send", ret);
@@ -233,9 +244,9 @@ int __run(struct myfirstrdma *cfg)
       ret = rdma_post_recv(cfg->cid, NULL, cfg->buf, cfg->size, cfg->mr);
       if (ret)
 	return report(cfg, "rdma_post_recv", ret);
-    }
-    else {
-      wait(cfg->buf, cval, cfg->size);
+    } else {
+      if (cfg->wait)
+	wait(cfg->buf, cval, cfg->size);
       ret = rdma_get_recv_comp(cfg->cid, &wc);
       if (ret != 1)
 	return report(cfg, "rdma_get_recv_comp", ret);
@@ -244,14 +255,16 @@ int __run(struct myfirstrdma *cfg)
     sval = cval+1;
     
     if (cfg->server) {
-      wait(cfg->buf, sval, cfg->size);
+      if (cfg->wait)
+	wait(cfg->buf, sval, cfg->size);
       ret = rdma_get_recv_comp(cfg->cid, &wc);
       if (ret != 1)
 	return report(cfg, "rdma_get_recv_comp", ret);
 
     } else {
-      memset(cfg->buf, sval, cfg->size);
-      usleep(1000);
+      if (cfg->memset)
+	memset(cfg->buf, sval, cfg->size);
+      __sync_synchronize();
       ret = rdma_post_send(cfg->cid, NULL, cfg->buf, cfg->size, cfg->mr, 0);
       if (ret)
 	return report(cfg, "rdma_post_send", ret);
@@ -265,22 +278,18 @@ int __run(struct myfirstrdma *cfg)
     cval=sval+1;
     
   }
-  
-  /*if (cfg->server){
-    ret = rdma_post_send(cfg->cid, NULL, cfg->buf, cfg->size, cfg->mr, 0);
-    if (ret)
-      return report(cfg, "rdma_post_send", ret);
-    ret = rdma_get_send_comp(cfg->cid, &wc);
-    if (ret)
-      return report(cfg, "rdma_get_send_comp", ret);
-  } else {
-    unsigned i=0;
-    while(1){
-      fprintf(stdout,"\n");
-      fprintf(stderr,"%d\t0x%x\r",i, cfg->buf[0]);
-      usleep(1000000); i++;
-    }
-    }*/
+
+  gettimeofday(&cfg->end_time, NULL);
+  fprintf(stdout, "done.\n");
+
+  fprintf(stdout, "Transferred %zd bytes in %llu us = %2.3e B/s\n", 
+	  cfg->iters*cfg->size*2, 
+	  elapsed_utime(cfg->start_time, cfg->end_time),
+	  (float)cfg->iters*cfg->size*2/
+	  elapsed_utime(cfg->start_time, cfg->end_time)*1000000);
+  fprintf(stdout, "Average latency = %llu us.\n", 
+	  elapsed_utime(cfg->start_time, cfg->end_time) /
+	  cfg->iters / 2);
 
   return 0;
 }
@@ -302,7 +311,7 @@ int main(int argc, char *argv[])
   if ( setup(&cfg) )
     return report(&cfg, "setup", NO_MR);
   
-  if ( __run(&cfg) )
+  if ( run(&cfg) )
     return report(&cfg, "run", RUN_PROBLEM);
   
   free(cfg.buf);
