@@ -39,18 +39,14 @@
 #include <rdma/rdma_verbs.h>
 #include <infiniband/verbs.h>
 
-/* Enumeration for the error types we may enounter. We avoid using
- * perror just to keep the code simple.
- */
-
 enum errors {
-    NO_RDMA_DEV    = 1,
-    NO_CONTEXT     = 2,
-    NO_PROT_DOMAIN = 3,
-    NO_BUFFER      = 4,
-    NO_MR          = 5,
-    NO_CONNECTION  = 6,
-    RUN_PROBLEM    = 7,
+  NO_RDMA_DEV    = 1,
+  NO_CONTEXT     = 2,
+  NO_PROT_DOMAIN = 3,
+  NO_BUFFER      = 4,
+  NO_MR          = 5,
+  NO_CONNECTION  = 6,
+  RUN_PROBLEM    = 7,
 };
 
 /*
@@ -90,12 +86,7 @@ static const struct myfirstrdma defaults = {
   .iters    = 16,
 };
 
-/*
- * A helper function to assist in debug when function calls return
- * with an exit status.
- */
-
-int __report(struct myfirstrdma *cfg, const char *func, int val)
+int report(struct myfirstrdma *cfg, const char *func, int val)
 {
   if (cfg->debug)
     fprintf(stderr,"%s: %d = %s.\n", func, errno, strerror(errno));
@@ -109,7 +100,7 @@ int __report(struct myfirstrdma *cfg, const char *func, int val)
  * rdmacm is used. Return 0 on success.
  */
 
-int __setup(struct myfirstrdma *cfg)
+int setup(struct myfirstrdma *cfg)
 {
   int ret = 0;
   struct rdma_addrinfo *res;
@@ -130,7 +121,7 @@ int __setup(struct myfirstrdma *cfg)
     ret = rdma_getaddrinfo(NULL, cfg->port, &cfg->hints, &res);
   }
   if (ret)
-    return __report(cfg, "rdma_getaddrinfo", ret);
+    return report(cfg, "rdma_getaddrinfo", ret);
 
   /*
    * Now create a communication identifier and (on the client) a
@@ -150,7 +141,7 @@ int __setup(struct myfirstrdma *cfg)
     ret = rdma_create_ep(&cfg->lid, res, NULL, &cfg->attr);
   
   if (ret)
-    return __report(cfg, "rdma_create_ep", ret);
+    return report(cfg, "rdma_create_ep", ret);
 
   /*
    * We can now free the temporary variable with the address
@@ -167,29 +158,29 @@ int __setup(struct myfirstrdma *cfg)
   if (cfg->server){
     cfg->mr = rdma_reg_msgs(cfg->cid, cfg->buf, cfg->size);
     if (ret)
-      return __report(cfg, "rdma_reg_msgs", ret);
+      return report(cfg, "rdma_reg_msgs", ret);
     ret = rdma_connect(cfg->cid, NULL);
     if (ret)
-      return __report(cfg, "rdma_connect", ret);
+      return report(cfg, "rdma_connect", ret);
     if (cfg->verbose)
       fprintf(stdout, "Client established a connection to %s.\n",
 	      cfg->server);
   } else {
     ret = rdma_listen(cfg->lid, 0);
     if (ret)
-      return __report(cfg, "rdma_listen", ret);
+      return report(cfg, "rdma_listen", ret);
     ret = rdma_get_request(cfg->lid, &cfg->cid);
     if (ret)
-      return __report(cfg, "rdma_get_request", ret);
+      return report(cfg, "rdma_get_request", ret);
     cfg->mr = rdma_reg_msgs(cfg->cid, cfg->buf, cfg->size);
     if (ret)
-      return __report(cfg, "rdma_reg_msgs", ret);
+      return report(cfg, "rdma_reg_msgs", ret);
     ret = rdma_post_recv(cfg->cid, NULL, cfg->buf, cfg->size, cfg->mr);
     if (ret)
-      return __report(cfg, "rdma_post_recv", ret);
+      return report(cfg, "rdma_post_recv", ret);
     ret = rdma_accept(cfg->cid, NULL);
     if (ret)
-      return __report(cfg, "rdma_accept", ret);
+      return report(cfg, "rdma_accept", ret);
     if (cfg->verbose)
       fprintf(stdout, "Server detected a connection on %s from TBD.\n",
 	      cfg->cid->verbs->device->name);
@@ -197,7 +188,7 @@ int __setup(struct myfirstrdma *cfg)
     return ret;
 }
 
-int __compare(char *buf, char val, size_t size)
+int compare(char *buf, char val, size_t size)
 {
   
   for (unsigned i=0; i<size; i++){
@@ -210,9 +201,9 @@ int __compare(char *buf, char val, size_t size)
   return 1;
 }
 
-void __wait(char *buf, char val, size_t size)
+void wait(char *buf, char val, size_t size)
 {
-  while (__compare(buf, val, size)==0)
+  while (compare(buf, val, size)==0)
     __sync_synchronize();
 }
 
@@ -235,41 +226,41 @@ int __run(struct myfirstrdma *cfg)
       fprintf(stderr,"0x%x\r", cfg->buf[0]);
       ret = rdma_post_send(cfg->cid, NULL, cfg->buf, cfg->size, cfg->mr, 0);
       if (ret)
-	return __report(cfg, "rdma_post_send", ret);
+	return report(cfg, "rdma_post_send", ret);
       ret = rdma_get_send_comp(cfg->cid, &wc);
       if (ret != 1)
-	return __report(cfg, "rdma_get_send_comp", ret);
+	return report(cfg, "rdma_get_send_comp", ret);
       ret = rdma_post_recv(cfg->cid, NULL, cfg->buf, cfg->size, cfg->mr);
       if (ret)
-	return __report(cfg, "rdma_post_recv", ret);
+	return report(cfg, "rdma_post_recv", ret);
     }
     else {
-      __wait(cfg->buf, cval, cfg->size);
+      wait(cfg->buf, cval, cfg->size);
       ret = rdma_get_recv_comp(cfg->cid, &wc);
       if (ret != 1)
-	return __report(cfg, "rdma_get_recv_comp", ret);
+	return report(cfg, "rdma_get_recv_comp", ret);
     }
     
     sval = cval+1;
     
     if (cfg->server) {
-      __wait(cfg->buf, sval, cfg->size);
+      wait(cfg->buf, sval, cfg->size);
       ret = rdma_get_recv_comp(cfg->cid, &wc);
       if (ret != 1)
-	return __report(cfg, "rdma_get_recv_comp", ret);
+	return report(cfg, "rdma_get_recv_comp", ret);
 
     } else {
       memset(cfg->buf, sval, cfg->size);
       usleep(1000);
       ret = rdma_post_send(cfg->cid, NULL, cfg->buf, cfg->size, cfg->mr, 0);
       if (ret)
-	return __report(cfg, "rdma_post_send", ret);
+	return report(cfg, "rdma_post_send", ret);
       ret = rdma_get_send_comp(cfg->cid, &wc);
       if (ret != 1)
-	return __report(cfg, "rdma_get_send_comp", ret);
+	return report(cfg, "rdma_get_send_comp", ret);
       ret = rdma_post_recv(cfg->cid, NULL, cfg->buf, cfg->size, cfg->mr);
       if (ret)
-	return __report(cfg, "rdma_post_recv", ret);
+	return report(cfg, "rdma_post_recv", ret);
     }
     cval=sval+1;
     
@@ -278,10 +269,10 @@ int __run(struct myfirstrdma *cfg)
   /*if (cfg->server){
     ret = rdma_post_send(cfg->cid, NULL, cfg->buf, cfg->size, cfg->mr, 0);
     if (ret)
-      return __report(cfg, "rdma_post_send", ret);
+      return report(cfg, "rdma_post_send", ret);
     ret = rdma_get_send_comp(cfg->cid, &wc);
     if (ret)
-      return __report(cfg, "rdma_get_send_comp", ret);
+      return report(cfg, "rdma_get_send_comp", ret);
   } else {
     unsigned i=0;
     while(1){
@@ -299,69 +290,23 @@ int main(int argc, char *argv[])
 
   struct myfirstrdma cfg = defaults;
   
-  /* Process the command line. The only argument allowed is in
-     client mode and it points to the server. */
-  
   if (argc>2)
     return 1;
   else if (argc==2)
     cfg.server = strdup(argv[1]);
   
-  /* Now establish a RDMA connection between the client and
-   * server. If we are the server we start and wait for the
-   * connction to occur. If we are client we either find the server
-   * or we quit. We work with the very first rdma port detected on
-   * the machine.
-   */
-  
-  /*    cfg.dev_list = ibv_get_device_list(NULL);
-	if (!cfg.dev_list)
-	return NO_RDMA_DEV;*/
-  
-  /* Now that we have found a RDMA port we set that up for a
-   * connection by creates a context, a Protection Domain (PD), a
-   * Memory-Region (MR) and queues. Note we also have to allocate a
-   * memory region for the MR via a call to malloc.
-   */
-  
-  /*    cfg.ctx = ibv_open_device(cfg.dev_list[0]);
-	if (!cfg.ctx)
-	return __report(&cfg, "ibv_open_device", NO_CONTEXT);*/
-  
-  /*    cfg.pd = ibv_alloc_pd(cfg.ctx);
-	if (!cfg.pd)
-	return __report(&cfg, "ibv_alloc_pd", NO_PROT_DOMAIN);*/
-  
   cfg.buf = malloc(cfg.size);
   if (!cfg.buf)
-    return __report(&cfg, "malloc", NO_BUFFER);
+    return report(&cfg, "malloc", NO_BUFFER);
   
-  /*    cfg.mr = ibv_reg_mr(cfg.pd, cfg.buf, cfg.size, cfg.mr_flags);
-	if (!cfg.mr)
-	return __report(&cfg, "ibv_reg_mr", NO_MR);*/
-  
-  /* Now we get to some client/server specifc code. We use the rdma
-   * connection manager (rdmacm) library to establish a
-   * connection. This is only one of several ways of doing this. The
-   * server enters a passive listening mode while the client
-   * actively connects to the server provided via the command line.
-   */
-  
-  if ( __setup(&cfg) )
-    return __report(&cfg, "setup", NO_MR);
+  if ( setup(&cfg) )
+    return report(&cfg, "setup", NO_MR);
   
   if ( __run(&cfg) )
-    return __report(&cfg, "run", RUN_PROBLEM);
-  
-  
-  /* Tear everything down in reverse order to how it was constucted
-   * so we leave the program in a clean state.
-   */
+    return report(&cfg, "run", RUN_PROBLEM);
   
   free(cfg.buf);
   ibv_dereg_mr(cfg.mr);
-  //    ibv_dealloc_pd(cfg.pd);
-  //    ibv_close_device(cfg.ctx);
 
   return 0;
 }
