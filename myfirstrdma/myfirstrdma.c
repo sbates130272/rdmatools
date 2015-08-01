@@ -117,7 +117,6 @@ static const struct argconfig_commandline_options command_line_options[] = {
     {"i",             "NUM", CFG_LONG_SUFFIX, &defaults.iters, required_argument, NULL},
     {"iters",         "NUM", CFG_LONG_SUFFIX, &defaults.iters, required_argument,
             "number of iterations to perform"},
-    {"p",             "PORT", CFG_STRING, &defaults.port, required_argument, NULL},
     {"port",          "PORT", CFG_STRING, &defaults.port, required_argument,
             "port to use"},
     {"w",       "", CFG_NONE, &defaults.wait, no_argument, NULL},
@@ -361,7 +360,7 @@ int main(int argc, char *argv[])
     return 1; 
   } 
 
-  if (argc==1)
+  if (args==1)
     cfg.server = strdup(argv[1]);
 
   if (cfg.copymmio && cfg.peerdirect)
@@ -370,7 +369,7 @@ int main(int argc, char *argv[])
   if (cfg.peerdirect && !cfg.mmap)
     return report(&cfg, "bad defaults", BAD_ARGS);
 
-  if (cfg.mmap && !cfg.server) {
+  if ( (cfg.copymmio || cfg.peerdirect) && cfg.mmap && !cfg.server) {
     cfg.mmiofd = open(cfg.mmap, O_RDWR);
     if (cfg.mmiofd < 0)
       return report(&cfg, "open", NO_OPEN);
@@ -394,7 +393,7 @@ int main(int argc, char *argv[])
   if ( run(&cfg) )
     return report(&cfg, "run", RUN_PROBLEM);
 
-  if (cfg.mmap && !cfg.server) {
+  if ((cfg.copymmio || cfg.peerdirect) && cfg.mmap && !cfg.server) {
     munmap(cfg.mmio, cfg.size);
     close(cfg.mmiofd);
   }
