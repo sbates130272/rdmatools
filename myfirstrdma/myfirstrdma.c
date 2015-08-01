@@ -43,6 +43,8 @@
 #include <rdma/rdma_verbs.h>
 #include <infiniband/verbs.h>
 
+#include "../argconfig/argconfig.h"
+
 enum errors {
   BAD_ARGS       = 1,
   NO_OPEN,
@@ -57,6 +59,9 @@ enum errors {
  * information for this very simple RDMA program. After that, assign
  * some defaults to this container.
  */
+
+const char program_desc[] =
+    "Simple RDMA test program, acts as both client and server";
 
 struct myfirstrdma {
   char                    *server;
@@ -88,22 +93,53 @@ struct myfirstrdma {
 };
 
 static const struct myfirstrdma defaults = {
-  .server   = NULL,
-  .mr_flags = IBV_ACCESS_LOCAL_WRITE,
-  .size     = 4096,
-  .port     = "12345",
-  .hints    = { 0 },
-  .attr     = { 0 },
-  .debug    = 1,
-  .verbose  = 1,
-  .iters    = 512,
-  .wait     = 0,
-  .memset   = 0,
+  .server     = NULL,
+  .mr_flags   = IBV_ACCESS_LOCAL_WRITE,
+  .size       = 4096,
+  .port       = "12345",
+  .hints      = { 0 },
+  .attr       = { 0 },
+  .debug      = 1,
+  .verbose    = 1,
+  .iters      = 512,
+  .wait       = 0,
+  .memset     = 0,
 
-  .copymmio = 0,
-  .peerdirect  = 1,
-  .mmap     = "/sys/devices/pci0000:00/0000:00:01.0/0000:01:00.0/resource4",
+  .copymmio   = 0,
+  .peerdirect = 0,
+  .mmap       = "/sys/devices/pci0000:00/0000:00:01.0/0000:01:00.0/resource4",
 };
+
+static const struct argconfig_commandline_options command_line_options[] = {
+    {"s",             "NUM", CFG_LONG_SUFFIX, &defaults.size, required_argument, NULL},
+    {"size",          "NUM", CFG_LONG_SUFFIX, &defaults.size, required_argument,
+            "block size to use"},
+    {"i",             "NUM", CFG_LONG_SUFFIX, &defaults.iters, required_argument, NULL},
+    {"iters",         "NUM", CFG_LONG_SUFFIX, &defaults.iters, required_argument,
+            "number of iterations to perform"},
+    {"p",             "PORT", CFG_STRING, &defaults.port, required_argument, NULL},
+    {"port",          "PORT", CFG_STRING, &defaults.port, required_argument,
+            "port to use"},
+    {"w",       "", CFG_NONE, &defaults.wait, no_argument, NULL},
+    {"wait",    "", CFG_NONE, &defaults.wait, no_argument,
+            "use the in-build wait function which polls the MR"},
+    {"m",        "", CFG_NONE, &defaults.memset, no_argument, NULL},
+    {"memset",   "", CFG_NONE, &defaults.memset, no_argument,
+            "update the MR with data (should be used with --wait)"},
+    {"c",          "", CFG_NONE, &defaults.copymmio, no_argument, NULL},
+    {"copymmio",   "", CFG_NONE, &defaults.copymmio, no_argument,
+            "on server also copy data to a mmap region"},
+    {"p",             "", CFG_NONE, &defaults.peerdirect, no_argument, NULL},
+    {"peerdirect",    "", CFG_NONE, &defaults.peerdirect, no_argument,
+            "use PeerDirect (cannot use -c and must -m must lie within IOMEM)"},
+    {"mmap",          "MMAP", CFG_STRING, &defaults.mmap, required_argument,
+            "file to mmap, for -p should lie within IOMEM"},
+    {"v",             "", CFG_NONE, &defaults.verbose, no_argument, NULL},
+    {"verbose",       "", CFG_NONE, &defaults.verbose, no_argument,
+            "be verbose"},
+    {0}
+};
+
 
 static int report(struct myfirstrdma *cfg, const char *func, int val)
 {
@@ -314,11 +350,18 @@ int run(struct myfirstrdma *cfg)
 int main(int argc, char *argv[])
 {
 
-  struct myfirstrdma cfg = defaults;
+  struct myfirstrdma cfg;
+
+  argconfig_append_usage("[SERVER_NAME]");
+  int args = argconfig_parse(argc, argv, program_desc, command_line_options,
+		  &defaults, &cfg, sizeof(cfg));
   
-  if (argc>2)
-    return 1;
-  else if (argc==2)
+  if (args > 1) { 
+    argconfig_print_help(argv[0], program_desc, command_line_options); 
+    return 1; 
+  } 
+
+  if (argc==1)
     cfg.server = strdup(argv[1]);
 
   if (cfg.copymmio && cfg.peerdirect)
