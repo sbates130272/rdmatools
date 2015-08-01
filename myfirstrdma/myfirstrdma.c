@@ -44,6 +44,7 @@
 #include <infiniband/verbs.h>
 
 #include "../argconfig/argconfig.h"
+#include "../argconfig/report.h"
 
 enum errors {
   BAD_ARGS       = 1,
@@ -90,6 +91,8 @@ struct myfirstrdma {
 
   struct timeval          start_time;
   struct timeval          end_time;
+
+  struct timeval          *latency;
 };
 
 static const struct myfirstrdma defaults = {
@@ -285,6 +288,7 @@ int run(struct myfirstrdma *cfg)
       if (ret)
 	return report(cfg, "rdma_post_send", ret);
       ret = rdma_get_send_comp(cfg->cid, &wc);
+      gettimeofday(&cfg->latency[2*i], NULL);
       if (ret != 1)
 	return report(cfg, "rdma_get_send_comp", ret);
       ret = rdma_post_recv(cfg->cid, NULL, cfg->buf, cfg->size, cfg->mr);
@@ -294,6 +298,7 @@ int run(struct myfirstrdma *cfg)
       if (cfg->wait)
 	wait(cfg->buf, cval, cfg->size);
       ret = rdma_get_recv_comp(cfg->cid, &wc);
+      gettimeofday(&cfg->latency[2*i], NULL);
       if (ret != 1)
 	return report(cfg, "rdma_get_recv_comp", ret);
       if (cfg->copymmio)
@@ -307,6 +312,7 @@ int run(struct myfirstrdma *cfg)
       if (cfg->wait)
 	wait(cfg->buf, sval, cfg->size);
       ret = rdma_get_recv_comp(cfg->cid, &wc);
+      gettimeofday(&cfg->latency[2*i+1], NULL);
       if (ret != 1)
 	return report(cfg, "rdma_get_recv_comp", ret);
 
@@ -321,6 +327,7 @@ int run(struct myfirstrdma *cfg)
       if (ret)
 	return report(cfg, "rdma_post_send", ret);
       ret = rdma_get_send_comp(cfg->cid, &wc);
+      gettimeofday(&cfg->latency[2*i+1], NULL);
       if (ret != 1)
 	return report(cfg, "rdma_get_send_comp", ret);
       ret = rdma_post_recv(cfg->cid, NULL, cfg->buf, cfg->size, cfg->mr);
@@ -334,12 +341,10 @@ int run(struct myfirstrdma *cfg)
   gettimeofday(&cfg->end_time, NULL);
   fprintf(stdout, "done.\n");
 
-  fprintf(stdout, "Transferred %zd bytes in %llu us = %2.3e B/s\n", 
-	  cfg->iters*cfg->size*2, 
-	  elapsed_utime(cfg->start_time, cfg->end_time),
-	  (float)cfg->iters*cfg->size*2/
-	  elapsed_utime(cfg->start_time, cfg->end_time)*1000000);
-  fprintf(stdout, "Average latency = %llu us.\n", 
+  report_transfer_rate(stdout, &cfg->start_time,
+		       &cfg->end_time, cfg->iters*cfg->size*2);
+
+  fprintf(stdout, "\nAverage latency = %llu us.\n", 
 	  elapsed_utime(cfg->start_time, cfg->end_time) /
 	  cfg->iters / 2);
 
@@ -386,6 +391,9 @@ int main(int argc, char *argv[])
     if (!cfg.buf)
       return report(&cfg, "malloc", NO_BUFFER);
   }
+  cfg.latency = malloc(2*cfg.iters*sizeof(struct timeval));
+  if (!cfg.latency)
+    return report(&cfg, "malloc", NO_BUFFER);
   
   if ( setup(&cfg) )
     return report(&cfg, "setup", SETUP_PROBLEM);
@@ -399,6 +407,7 @@ int main(int argc, char *argv[])
   }
   if (!cfg.peerdirect || cfg.server)
     free(cfg.buf);
+  free(cfg.latency);
   ibv_dereg_mr(cfg.mr);
 
   return 0;
