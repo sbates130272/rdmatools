@@ -34,21 +34,22 @@
 #include <unistd.h>
 #include <string.h>
 #include <errno.h>
+#include <fcntl.h>
 
 #include <sys/time.h>
+#include <sys/mman.h>
 
 #include <rdma/rdma_cma.h>
 #include <rdma/rdma_verbs.h>
 #include <infiniband/verbs.h>
 
 enum errors {
-  NO_RDMA_DEV    = 1,
-  NO_CONTEXT     = 2,
-  NO_PROT_DOMAIN = 3,
-  NO_BUFFER      = 4,
-  NO_MR          = 5,
-  NO_CONNECTION  = 6,
-  RUN_PROBLEM    = 7,
+  BAD_ARGS       = 1,
+  NO_OPEN,
+  NO_MMAP,
+  NO_BUFFER,
+  SETUP_PROBLEM,
+  RUN_PROBLEM,
 };
 
 /*
@@ -59,23 +60,29 @@ enum errors {
 
 struct myfirstrdma {
   char                    *server;
-  struct ibv_device       **dev_list;
-  struct ibv_context	  *ctx;
-  struct ibv_pd           *pd;
   char                    *buf;
   struct ibv_mr           *mr;
   int                     mr_flags;
   size_t                  size;
   char                    *port;
+
   struct rdma_addrinfo    hints;
   struct rdma_cm_id       *lid;
   struct rdma_cm_id       *cid;
   struct ibv_qp_init_attr attr;
+
   unsigned                debug;
   unsigned                verbose;
   unsigned                iters;
   unsigned                wait;
   unsigned                memset;
+
+  unsigned                copymmio;
+  unsigned                peerdirect;
+  int                     mmiofd;
+  void                    *mmio;
+  char                    *mmap;
+
   struct timeval          start_time;
   struct timeval          end_time;
 };
@@ -92,6 +99,10 @@ static const struct myfirstrdma defaults = {
   .iters    = 512,
   .wait     = 0,
   .memset   = 0,
+
+  .copymmio = 0,
+  .peerdirect  = 1,
+  .mmap     = "/sys/devices/pci0000:00/0000:00:01.0/0000:01:00.0/resource4",
 };
 
 static int report(struct myfirstrdma *cfg, const char *func, int val)
@@ -250,6 +261,9 @@ int run(struct myfirstrdma *cfg)
       ret = rdma_get_recv_comp(cfg->cid, &wc);
       if (ret != 1)
 	return report(cfg, "rdma_get_recv_comp", ret);
+      if (cfg->copymmio)
+	if ( !memcpy(cfg->mmio, cfg->buf, cfg->size) )
+	  return report(cfg, "memcpy", -ENOMEM);
     }
     
     sval = cval+1;
@@ -262,6 +276,9 @@ int run(struct myfirstrdma *cfg)
 	return report(cfg, "rdma_get_recv_comp", ret);
 
     } else {
+      if (cfg->copymmio)
+	if ( !memcpy(cfg->buf, cfg->mmio, cfg->size) )
+	  return report(cfg, "memcpy", -ENOMEM);
       if (cfg->memset)
 	memset(cfg->buf, sval, cfg->size);
       __sync_synchronize();
@@ -303,18 +320,43 @@ int main(int argc, char *argv[])
     return 1;
   else if (argc==2)
     cfg.server = strdup(argv[1]);
+
+  if (cfg.copymmio && cfg.peerdirect)
+    return report(&cfg, "bad defaults", BAD_ARGS);
   
-  cfg.buf = malloc(cfg.size);
-  if (!cfg.buf)
-    return report(&cfg, "malloc", NO_BUFFER);
+  if (cfg.peerdirect && !cfg.mmap)
+    return report(&cfg, "bad defaults", BAD_ARGS);
+
+  if (cfg.mmap && !cfg.server) {
+    cfg.mmiofd = open(cfg.mmap, O_RDWR);
+    if (cfg.mmiofd < 0)
+      return report(&cfg, "open", NO_OPEN);
+    cfg.mmio = mmap(NULL, cfg.size, PROT_WRITE | PROT_READ,
+		   MAP_SHARED, cfg.mmiofd, 0);
+    if (!cfg.mmio < 0)
+      return report(&cfg, "mmap", NO_MMAP);
+  }
+
+  if ( cfg.peerdirect && !cfg.server ){
+    cfg.buf = cfg.mmio;
+  } else {
+    cfg.buf = malloc(cfg.size);
+    if (!cfg.buf)
+      return report(&cfg, "malloc", NO_BUFFER);
+  }
   
   if ( setup(&cfg) )
-    return report(&cfg, "setup", NO_MR);
+    return report(&cfg, "setup", SETUP_PROBLEM);
   
   if ( run(&cfg) )
     return report(&cfg, "run", RUN_PROBLEM);
-  
-  free(cfg.buf);
+
+  if (cfg.mmap && !cfg.server) {
+    munmap(cfg.mmio, cfg.size);
+    close(cfg.mmiofd);
+  }
+  if (!cfg.peerdirect || cfg.server)
+    free(cfg.buf);
   ibv_dereg_mr(cfg.mr);
 
   return 0;
