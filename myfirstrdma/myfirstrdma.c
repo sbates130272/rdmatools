@@ -167,14 +167,6 @@ void wait(char *buf, char val, size_t size)
     __sync_synchronize();
 }
 
-static unsigned long long elapsed_utime(struct timeval start_time,
-					struct timeval end_time)
-{
-  unsigned long long ret = (end_time.tv_sec - start_time.tv_sec)*1000000 +
-    (end_time.tv_usec - start_time.tv_usec);
-  return ret;
-}
-
 static int setup(struct myfirstrdma *cfg)
 {
   int ret = 0;
@@ -341,12 +333,15 @@ int run(struct myfirstrdma *cfg)
   gettimeofday(&cfg->end_time, NULL);
   fprintf(stdout, "done.\n");
 
-  report_transfer_rate(stdout, &cfg->start_time,
+  fprintf(stderr, "Transfered: ");
+  report_transfer_rate(stderr, &cfg->start_time,
 		       &cfg->end_time, cfg->iters*cfg->size*2);
+  fprintf(stderr, "\n");
 
-  fprintf(stdout, "\nAverage latency = %llu us.\n", 
-	  elapsed_utime(cfg->start_time, cfg->end_time) /
-	  cfg->iters / 2);
+  fprintf(stderr, "Latency: ");
+  report_latency(stderr, &cfg->start_time,
+		 cfg->latency, cfg->iters*2);
+  fprintf(stderr, "\n");
 
   return 0;
 }

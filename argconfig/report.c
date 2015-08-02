@@ -84,3 +84,43 @@ void report_transfer_bin_rate(FILE *outf, struct timeval *start_time,
         timeval_to_secs(start_time);
     report_transfer_bin_rate_elapsed(outf, elapsed_time, bytes);
 }
+
+void report_latency(FILE *outf, struct timeval *start_time,
+		    struct timeval *latencies, size_t count)
+{
+    const char *e_suffix = " ";
+    double elapsed_time, min_time, max_time, avg_time;
+
+    elapsed_time = timeval_to_secs(&latencies[0]) -
+      timeval_to_secs(start_time);
+
+    min_time = max_time = avg_time = elapsed_time;
+
+    for (unsigned i=1 ; i<count ; i++) {
+
+        elapsed_time = timeval_to_secs(&latencies[i]) -
+	    timeval_to_secs(&latencies[i-1]);
+
+	if (elapsed_time < min_time)
+	    min_time = elapsed_time;
+	else if (elapsed_time > max_time)
+	    max_time = elapsed_time;
+
+	avg_time += elapsed_time;
+
+    }
+    if (min_time < 1)
+      e_suffix = suffix_si_get(&min_time);
+    fprintf(outf, "min = %-6.1f%ss : ",
+            min_time, e_suffix);
+    if (max_time < 1)
+      e_suffix = suffix_si_get(&max_time);
+    fprintf(outf, "max = %-6.1f%ss : ",
+            max_time, e_suffix);
+    avg_time /= count;
+    if (avg_time < 1)
+      e_suffix = suffix_si_get(&avg_time);
+    fprintf(outf, "avg = %-6.1f%ss",
+            avg_time, e_suffix);
+
+}
