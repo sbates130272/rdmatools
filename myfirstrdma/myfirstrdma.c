@@ -129,7 +129,7 @@ static const struct argconfig_commandline_options command_line_options[] = {
     {"port",          "PORT", CFG_STRING, &defaults.port, required_argument,
             "port to use"},
     {"l",          "PORT", CFG_STRING, &defaults.port, required_argument, NULL},
-    {"log",          "PORT", CFG_STRING, &defaults.port, required_argument,
+    {"log",        "PORT", CFG_STRING, &defaults.port, required_argument,
             "log file to use (if not set then no log)"},
     {"w",       "", CFG_NONE, &defaults.wait, no_argument, NULL},
     {"wait",    "", CFG_NONE, &defaults.wait, no_argument,
@@ -162,11 +162,11 @@ static int report(struct myfirstrdma *cfg, const char *func, int val)
 
 int compare(char *buf, char val, size_t size)
 {
-  
+
   for (unsigned i=0; i<size; i++)
     if (buf[i]!=val)
       return 0;
-  
+
   return 1;
 }
 
@@ -180,7 +180,7 @@ static int setup(struct myfirstrdma *cfg)
 {
   int ret = 0;
   struct rdma_addrinfo *res;
-  
+
   /*
    * Use rdma_getaddrinfo to determine if there is a path to the
    * other end. The server runs in passive mode so it waits for a
@@ -188,7 +188,7 @@ static int setup(struct myfirstrdma *cfg)
    * a path exists based on the server name, port and the hints
    * provided. The result comes back in res.
    */
-  
+
   cfg->hints.ai_port_space = RDMA_PS_TCP;
   if (cfg->server) {
     ret = rdma_getaddrinfo(cfg->server, cfg->port, &cfg->hints, &res);
@@ -204,18 +204,18 @@ static int setup(struct myfirstrdma *cfg)
    * queue pair (QP) for processing jobs. We set certain attributes
    * on this link.
    */
-  
+
   cfg->attr.cap.max_send_wr     = cfg->attr.cap.max_recv_wr  = 1;
   cfg->attr.cap.max_send_sge    = cfg->attr.cap.max_recv_sge = 1;
   cfg->attr.cap.max_inline_data = 16;
   cfg->attr.sq_sig_all          = 1;
-  
+
   if (cfg->server){
     cfg->attr.qp_context = cfg->cid;
     ret = rdma_create_ep(&cfg->cid, res, NULL, &cfg->attr);
   } else
     ret = rdma_create_ep(&cfg->lid, res, NULL, &cfg->attr);
-  
+
   if (ret)
     return report(cfg, "rdma_create_ep", ret);
 
@@ -225,12 +225,12 @@ static int setup(struct myfirstrdma *cfg)
    */
 
   rdma_freeaddrinfo(res);
-  
+
   /* Now either connect to the server or setup a wait for a
    * connection from a client. On the server side we also setup a
    * receive QP entry so we are ready to receive data.
    */
-  
+
   if (cfg->server){
     cfg->mr = rdma_reg_msgs(cfg->cid, cfg->buf, cfg->size);
     if (ret)
@@ -266,13 +266,13 @@ static int setup(struct myfirstrdma *cfg)
 
 int run(struct myfirstrdma *cfg)
 {
-  
+
   int ret;
   struct ibv_wc wc;
   int sval = 0, cval = 1;
 
   memset((void*)cfg->buf, 0x0, cfg->size);
-  
+
   if (cfg->verbose)
     fprintf(stdout, "%s %d iterations of %zdB chunks...",
 	    (cfg->server) ? "Initiating" : "Servicing", cfg->iters, cfg->size);
@@ -306,9 +306,9 @@ int run(struct myfirstrdma *cfg)
 	if ( !memcpy(cfg->mmio, cfg->buf, cfg->size) )
 	  return report(cfg, "memcpy", -ENOMEM);
     }
-    
+
     sval = cval+1;
-    
+
     if (cfg->server) {
       if (cfg->wait)
 	wait(cfg->buf, sval, cfg->size);
@@ -336,7 +336,7 @@ int run(struct myfirstrdma *cfg)
 	return report(cfg, "rdma_post_recv", ret);
     }
     cval=sval+1;
-    
+
   }
 
   gettimeofday(&cfg->end_time, NULL);
@@ -363,20 +363,25 @@ int main(int argc, char *argv[])
   argconfig_append_usage("[SERVER_NAME]");
   int args = argconfig_parse(argc, argv, program_desc, command_line_options,
 		  &defaults, &cfg, sizeof(cfg));
-  
-  if (args > 1) { 
-    argconfig_print_help(argv[0], program_desc, command_line_options); 
-    return 1; 
-  } 
+
+  if (args > 1) {
+    argconfig_print_help(argv[0], program_desc, command_line_options);
+    return 1;
+  }
 
   if (args==1)
     cfg.server = strdup(argv[1]);
 
   if (cfg.copymmio && cfg.peerdirect)
     return report(&cfg, "bad defaults", BAD_ARGS);
-  
+
   if (cfg.peerdirect && !cfg.mmap)
     return report(&cfg, "bad defaults", BAD_ARGS);
+
+  if (cfg.log)
+      cfg.flog = fopen(cfg.log,"w");
+  if (!cfg.flog)
+      return report(&cfg, "cannot open log file", BAD_ARGS);
 
   if ( (cfg.copymmio || cfg.peerdirect) && cfg.mmap && !cfg.server) {
     cfg.mmiofd = open(cfg.mmap, O_RDWR);
@@ -398,10 +403,10 @@ int main(int argc, char *argv[])
   cfg.latency = malloc(2*cfg.iters*sizeof(struct timeval));
   if (!cfg.latency)
     return report(&cfg, "malloc", NO_BUFFER);
-  
+
   if ( setup(&cfg) )
     return report(&cfg, "setup", SETUP_PROBLEM);
-  
+
   if ( run(&cfg) )
     return report(&cfg, "run", RUN_PROBLEM);
 
@@ -413,6 +418,8 @@ int main(int argc, char *argv[])
     free(cfg.buf);
   free(cfg.latency);
   ibv_dereg_mr(cfg.mr);
+  if (cfg.flog)
+      fclose(cfg.flog);
 
   return 0;
 }
