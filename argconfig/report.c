@@ -85,7 +85,7 @@ void report_transfer_bin_rate(FILE *outf, struct timeval *start_time,
     report_transfer_bin_rate_elapsed(outf, elapsed_time, bytes);
 }
 
-void report_latency(FILE *outf, struct timeval *start_time,
+void report_latency(FILE *outf, FILE *log, struct timeval *start_time,
 		    struct timeval *latencies, size_t count)
 {
     const char *min_suffix = " ", *max_suffix = " ",
@@ -94,7 +94,9 @@ void report_latency(FILE *outf, struct timeval *start_time,
     size_t min_pos = 0, max_pos = 0;
 
     elapsed_time = timeval_to_secs(&latencies[0]) -
-      timeval_to_secs(start_time);
+        timeval_to_secs(start_time);
+    if (log)
+        fprintf(log,"%4d\t%f\n", 0, elapsed_time);
 
     min_time = max_time = avg_time = elapsed_time;
 
@@ -102,6 +104,8 @@ void report_latency(FILE *outf, struct timeval *start_time,
 
         elapsed_time = timeval_to_secs(&latencies[i]) -
 	    timeval_to_secs(&latencies[i-1]);
+	if (log)
+	    fprintf(log,"%4d\t%f\n", i, elapsed_time);
 
 	if (elapsed_time < min_time) {
 	    min_time = elapsed_time;
@@ -114,6 +118,7 @@ void report_latency(FILE *outf, struct timeval *start_time,
 	avg_time += elapsed_time;
 
     }
+
     if (min_time < 1)
         min_suffix = suffix_si_get(&min_time);
     fprintf(outf, "min (%zd) = %-6.1f%ss : ",

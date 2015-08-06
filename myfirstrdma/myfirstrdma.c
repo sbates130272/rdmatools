@@ -93,6 +93,9 @@ struct myfirstrdma {
   struct timeval          end_time;
 
   struct timeval          *latency;
+
+  char                    *log;
+  FILE                    *flog;
 };
 
 static const struct myfirstrdma defaults = {
@@ -111,6 +114,9 @@ static const struct myfirstrdma defaults = {
   .copymmio   = 0,
   .peerdirect = 0,
   .mmap       = "/sys/devices/pci0000:00/0000:00:01.0/0000:01:00.0/resource4",
+
+  .log        = NULL,
+  .flog       = NULL,
 };
 
 static const struct argconfig_commandline_options command_line_options[] = {
@@ -122,6 +128,9 @@ static const struct argconfig_commandline_options command_line_options[] = {
             "number of iterations to perform"},
     {"port",          "PORT", CFG_STRING, &defaults.port, required_argument,
             "port to use"},
+    {"l",          "PORT", CFG_STRING, &defaults.port, required_argument, NULL},
+    {"log",          "PORT", CFG_STRING, &defaults.port, required_argument,
+            "log file to use (if not set then no log)"},
     {"w",       "", CFG_NONE, &defaults.wait, no_argument, NULL},
     {"wait",    "", CFG_NONE, &defaults.wait, no_argument,
             "use the in-build wait function which polls the MR"},
@@ -339,7 +348,7 @@ int run(struct myfirstrdma *cfg)
   fprintf(stderr, "\n");
 
   fprintf(stderr, "Latency: ");
-  report_latency(stderr, &cfg->start_time,
+  report_latency(stderr, cfg->flog, &cfg->start_time,
 		 cfg->latency, cfg->iters*2);
   fprintf(stderr, "\n");
 
