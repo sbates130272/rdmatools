@@ -25,7 +25,8 @@ int main ()
     ibv_fork_init();
     ibv_device_list = ibv_get_device_list(&num_ibv_devices);
     if (ibv_device_list==NULL){
-        fprintf(stderr, "Error: %s\n", strerror(errno));
+        fprintf(stderr, "Error (%d): %s\n", errno,
+                strerror(errno));
         return errno;
     }
     fprintf(stdout,"INFO: Found %d rdma device(s) on this host.\n",

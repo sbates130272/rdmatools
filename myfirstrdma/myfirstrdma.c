@@ -378,10 +378,11 @@ int main(int argc, char *argv[])
   if (cfg.peerdirect && !cfg.mmap)
     return report(&cfg, "bad defaults", BAD_ARGS);
 
-  if (cfg.log)
+  if (cfg.log){
       cfg.flog = fopen(cfg.log,"w");
-  if (!cfg.flog)
-      return report(&cfg, "cannot open log file", BAD_ARGS);
+      if (!cfg.flog)
+          return report(&cfg, "cannot open log file", BAD_ARGS);
+  }
 
   if ( (cfg.copymmio || cfg.peerdirect) && cfg.mmap && !cfg.server) {
     cfg.mmiofd = open(cfg.mmap, O_RDWR);
