@@ -18,7 +18,7 @@ int main ()
     int num_ibv_devices;
     struct ibv_device **ibv_device_list;
     struct ibv_context *ibv_ctx;
-    struct ibv_device_attr ibv_dev_attr;
+    struct ibv_exp_device_attr ibv_exp_dev_attr;
 
     /* Start by finding the number of RDMA devices on this host, we
      * can then use this to construct a list of devices.*/
@@ -47,12 +47,15 @@ int main ()
      * or not. Note that if your libibverbs is not up to date this
      * code will break during compile. */
 
-    if ( ibv_query_device(ibv_ctx, &ibv_dev_attr) ){
-        fprintf(stderr, "ibv_query_device (%d): %s\n", errno,
+    if ( ibv_exp_query_device(ibv_ctx, &ibv_exp_dev_attr) ){
+        fprintf(stderr, "ibv_exp_query_device (%d): %s\n", errno,
                 strerror(errno));
         return errno;
     }
-    int
+    if ( !(ibv_exp_dev_attr.exp_device_cap_flags & IBV_EXP_DEVICE_EC_OFFLOAD) ){
+        fprintf(stderr, "device does not support EC!\n");
+        return -1;
+    }
 
 close:
     ibv_close_device(ibv_ctx);
