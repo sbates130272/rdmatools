@@ -6,6 +6,11 @@
 
 #include <infiniband/verbs.h>
 
+/*
+ * NB. This code relies on the MOFED experimental code being
+ * installed. If it is not this code will not even compile!
+ */
+
 static void __ibv_pretty_print(struct ibv_device *dev)
 {
     fprintf(stdout, "Name = %s.\n", ibv_get_device_name(dev));
@@ -45,7 +50,10 @@ int main ()
 
     /* Confirm if this device has the capability to do erasure coding
      * or not. Note that if your libibverbs is not up to date this
-     * code will break during compile. */
+     * code will break during compile as the EC features currently
+     * reside in the experimental section of the MOFED releases (as of
+     * Jan 2016).
+     */
 
     if ( ibv_exp_query_device(ibv_ctx, &ibv_exp_dev_attr) ){
         fprintf(stderr, "ibv_exp_query_device (%d): %s\n", errno,
@@ -56,6 +64,12 @@ int main ()
         fprintf(stderr, "device does not support EC!\n");
         return -1;
     }
+
+    /*
+     * Now that we have got this far we know we have a HCA that
+     * supports EC. We now configure the device to do some simple
+     * encoding tests so we can benchmark it.
+     */
 
 close:
     ibv_close_device(ibv_ctx);
