@@ -23,6 +23,7 @@ int main ()
     int num_ibv_devices;
     struct ibv_device **ibv_device_list;
     struct ibv_context *ibv_ctx;
+    struct ibv_device_attr ibv_dev_attr;
     struct ibv_exp_device_attr ibv_exp_dev_attr;
 
     /* Start by finding the number of RDMA devices on this host, we
@@ -47,6 +48,11 @@ int main ()
     /* Open the first device on the list. */
 
     ibv_ctx = ibv_open_device(ibv_device_list[0]);
+    if ( ibv_ctx == NULL ){
+        fprintf(stderr, "ibv_open_device (%d): %s\n", errno,
+                strerror(errno));
+        return errno;
+    }
 
     /* Confirm if this device has the capability to do erasure coding
      * or not. Note that if your libibverbs is not up to date this
@@ -55,11 +61,18 @@ int main ()
      * Jan 2016).
      */
 
+    if ( ibv_query_device(ibv_ctx, &ibv_dev_attr) ){
+        fprintf(stderr, "ibv_query_device (%d): %s\n", errno,
+                strerror(errno));
+        return errno;
+    }
     if ( ibv_exp_query_device(ibv_ctx, &ibv_exp_dev_attr) ){
         fprintf(stderr, "ibv_exp_query_device (%d): %s\n", errno,
                 strerror(errno));
         return errno;
     }
+    fprintf(stdout,"0x%08x : 0x%08x\n", ibv_dev_attr.device_cap_flags,
+            ibv_exp_dev_attr.exp_device_cap_flags);
     if ( !(ibv_exp_dev_attr.exp_device_cap_flags & IBV_EXP_DEVICE_EC_OFFLOAD) ){
         fprintf(stderr, "device does not support EC!\n");
         return -1;
